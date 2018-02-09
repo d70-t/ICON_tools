@@ -30,8 +30,8 @@ def valid_edges(grid, edge_ids):
     return edge_ids[valid]
 
 def grow_via_vertex(grid, cell_ids):
-    vertices = valid_vertices(grid, np.unique(grid.vertex_of_cell.sel(cell=cell_ids).data) - 1)
-    new_cells = valid_cells(grid, np.unique(grid.cells_of_vertex.sel(vertex=vertices).data) - 1)
+    vertices = valid_vertices(grid, np.unique(grid.vertex_of_cell.isel(cell=cell_ids).data) - 1)
+    new_cells = valid_cells(grid, np.unique(grid.cells_of_vertex.isel(vertex=vertices).data) - 1)
     return np.setdiff1d(new_cells, cell_ids)
 
 def cut_around_vertex(grid, center_vertex_id, radius):
@@ -43,15 +43,15 @@ def cut_around_vertex(grid, center_vertex_id, radius):
     """
 
     assert(len(valid_vertices(grid, np.array([center_vertex_id]))) > 0)
-    cells = valid_cells(grid, grid.cells_of_vertex.sel(vertex=center_vertex_id).data - 1)
+    cells = valid_cells(grid, grid.cells_of_vertex.isel(vertex=center_vertex_id).data - 1)
     new_cells = cells
     while radius > 0:
         new_cells = np.setdiff1d(grow_via_vertex(grid, new_cells), cells)
         cells = np.union1d(cells, new_cells)
         radius -= 1
 
-    vertices = valid_vertices(grid, np.unique(grid.vertex_of_cell.sel(cell=cells)) - 1)
-    edges = valid_edges(grid, np.unique(grid.edge_of_cell.sel(cell=cells)) - 1)
+    vertices = valid_vertices(grid, np.unique(grid.vertex_of_cell.isel(cell=cells)) - 1)
+    edges = valid_edges(grid, np.unique(grid.edge_of_cell.isel(cell=cells)) - 1)
 
     renumbering_table = xr.Dataset({
         "cell_renumbering": xr.DataArray(cells+1, dims=("cell",)),
@@ -59,7 +59,7 @@ def cut_around_vertex(grid, center_vertex_id, radius):
         "vertex_renumbering": xr.DataArray(vertices+1, dims=("vertex",)),
         })
 
-    new_grid = grid.sel(cell=cells, edge=edges, vertex=vertices)
+    new_grid = grid.isel(cell=cells, edge=edges, vertex=vertices)
     inv_indices = {
             "cell": {v+1:idx+1 for idx, v in enumerate(cells)},
             "edge": {v+1:idx+1 for idx, v in enumerate(edges)},
