@@ -44,11 +44,15 @@ def cut_around_vertex(grid, center_vertex_id, radius):
 
     assert(len(valid_vertices(grid, np.array([center_vertex_id]))) > 0)
     cells = valid_cells(grid, grid.cells_of_vertex.isel(vertex=center_vertex_id).data - 1)
-    new_cells = cells
-    while radius > 0:
-        new_cells = np.setdiff1d(grow_via_vertex(grid, new_cells), cells)
-        cells = np.union1d(cells, new_cells)
-        radius -= 1
+
+    if radius >= 0:
+        new_cells = cells
+        while radius > 0:
+            new_cells = np.setdiff1d(grow_via_vertex(grid, new_cells), cells)
+            cells = np.union1d(cells, new_cells)
+            radius -= 1
+    else:
+        cells = cells[:1]
 
     vertices = valid_vertices(grid, np.unique(grid.vertex_of_cell.isel(cell=cells)) - 1)
     edges = valid_edges(grid, np.unique(grid.edge_of_cell.isel(cell=cells)) - 1)
@@ -81,7 +85,7 @@ def _main():
     parser.add_argument("output_grid")
     parser.add_argument("output_renumbering_table")
     parser.add_argument("central_vertex", type=int)
-    parser.add_argument("radius", type=int)
+    parser.add_argument("radius", type=int, help="number of rings around central ring of cells, negative-> only one cell")
 
     args = parser.parse_args()
 
