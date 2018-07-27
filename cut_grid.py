@@ -77,6 +77,18 @@ def cut_around_vertex(grid, center_vertex_id, radius):
 
     return new_grid, renumbering_table
 
+def find_central_vertex(grid, vertex_spec):
+    try:
+        return int(vertex_spec)
+    except ValueError:
+        parts = vertex_spec.split(",")
+        if len(parts) != 2:
+            raise ValueError("invalid vertex definition: {}".format(vertex_spec))
+        lat, lon = [np.deg2rad(float(x)) for x in parts]
+        distance2 = (grid.vlat.data - lat) ** 2 + (grid.vlon.data - lon) ** 2
+        return np.argmin(distance2)
+
+
 def _main():
     import argparse
 
@@ -84,14 +96,16 @@ def _main():
     parser.add_argument("input_grid")
     parser.add_argument("output_grid")
     parser.add_argument("output_renumbering_table")
-    parser.add_argument("central_vertex", type=int)
+    parser.add_argument("central_vertex", help="either int, meaning a vertex index or <lat>,<lon> (comma separated latitude longitude pair in decimal degree notation) meaning the vertex closes to this position")
     parser.add_argument("radius", type=int, help="number of rings around central ring of cells, negative-> only one cell")
 
     args = parser.parse_args()
 
     grid = xr.open_dataset(args.input_grid)
 
-    new_grid, renumbering_table = cut_around_vertex(grid, args.central_vertex, args.radius)
+    central_vertex = find_central_vertex(grid, args.central_vertex)
+    print("cutting around vertex {}".format(central_vertex))
+    new_grid, renumbering_table = cut_around_vertex(grid, central_vertex, args.radius)
 
     new_grid.to_netcdf(args.output_grid)
     renumbering_table.to_netcdf(args.output_renumbering_table)
