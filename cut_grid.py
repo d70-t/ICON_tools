@@ -1,7 +1,7 @@
 import numpy as np
 import xarray as xr
 
-RENUMBERING_FIELDS = [
+RENUMBERING_FIELDS = dict([
     ("edge_of_cell", "edge"),
     ("vertex_of_cell", "vertex"),
     ("adjacent_cell_of_edge", "cell"),
@@ -14,7 +14,7 @@ RENUMBERING_FIELDS = [
     ("cell_index", "cell"),
     ("vertex_index", "vertex"),
     ("edge_index", "edge"),
-    ]
+    ])
 
 
 def valid_cells(grid, cell_ids):
@@ -29,10 +29,15 @@ def valid_edges(grid, edge_ids):
     valid = (edge_ids >= 0) & (edge_ids < grid.dims["edge"])
     return edge_ids[valid]
 
-def grow_via_vertex(grid, cell_ids):
-    vertices = valid_vertices(grid, np.unique(grid.vertex_of_cell.isel(cell=cell_ids).data) - 1)
-    new_cells = valid_cells(grid, np.unique(grid.cells_of_vertex.isel(vertex=vertices).data) - 1)
+def grow_via_vertex(grid, vertex_of_cell, cells_of_vertex, cell_ids):
+    vertices = valid_vertices(grid, np.unique(vertex_of_cell[cell_ids]))
+    new_cells = valid_cells(grid, np.unique(cells_of_vertex[vertices]))
     return np.setdiff1d(new_cells, cell_ids)
+
+def mk_inv_index(size, fwd_index):
+    out = np.zeros(size+1, dtype="i4")-1
+    out[fwd_index+1] = np.arange(1, len(fwd_index)+1, dtype="i4")
+    return out
 
 def cut_around_vertex(grid, center_vertex_id, radius):
     """
@@ -43,38 +48,57 @@ def cut_around_vertex(grid, center_vertex_id, radius):
     """
 
     assert(len(valid_vertices(grid, np.array([center_vertex_id]))) > 0)
-    cells = valid_cells(grid, grid.cells_of_vertex.isel(vertex=center_vertex_id).data - 1)
+    vertex_of_cell = grid.vertex_of_cell.load().transpose("cell", "nv").data - 1
+    cells_of_vertex = grid.cells_of_vertex.load().transpose("vertex", "ne").data - 1
+    cells = valid_cells(grid, cells_of_vertex[center_vertex_id])
 
     if radius >= 0:
         new_cells = cells
         while radius > 0:
-            new_cells = np.setdiff1d(grow_via_vertex(grid, new_cells), cells)
+            print("radius:", radius)
+            new_cells = np.setdiff1d(grow_via_vertex(grid, vertex_of_cell, cells_of_vertex, new_cells), cells)
             cells = np.union1d(cells, new_cells)
             radius -= 1
     else:
         cells = cells[:1]
 
-    vertices = valid_vertices(grid, np.unique(grid.vertex_of_cell.isel(cell=cells)) - 1)
-    edges = valid_edges(grid, np.unique(grid.edge_of_cell.isel(cell=cells)) - 1)
+    print("searching vertices")
+    vertices = valid_vertices(grid, np.unique(vertex_of_cell[cells]))
+    print("searching edges")
+    edges = valid_edges(grid, np.unique(grid.edge_of_cell.load().isel(cell=cells)) - 1)
 
+    print("generating renumbering tables")
     renumbering_table = xr.Dataset({
         "cell_renumbering": xr.DataArray(cells+1, dims=("cell",)),
         "edge_renumbering": xr.DataArray(edges+1, dims=("edge",)),
         "vertex_renumbering": xr.DataArray(vertices+1, dims=("vertex",)),
         })
 
-    new_grid = grid.isel(cell=cells, edge=edges, vertex=vertices)
+    print("generating inverse indices")
     inv_indices = {
-            "cell": {v+1:idx+1 for idx, v in enumerate(cells)},
-            "edge": {v+1:idx+1 for idx, v in enumerate(edges)},
-            "vertex": {v+1:idx+1 for idx, v in enumerate(vertices)},
+            "cell": mk_inv_index(grid.dims["cell"], cells),
+            "edge": mk_inv_index(grid.dims["edge"], edges),
+            "vertex": mk_inv_index(grid.dims["vertex"], vertices),
         }
+    slices = {"cell": cells, "edge": edges, "vertex": vertices}
 
-    for field, key in RENUMBERING_FIELDS:
-        inv_index = inv_indices[key]
-        remap = np.vectorize(lambda x: inv_index.get(x, -1))
-        new_grid[field].data = remap(new_grid[field].data)
+    out_vars = {}
+    for name, var in grid.variables.items():
+        print("converting variable {}".format(name))
+        renumber_field = RENUMBERING_FIELDS.get(name, None)
+        local_slices = {k:v for k, v in slices.items() if k in var.dims}
+        temp = var.data
+        try:
+            temp = temp.compute()
+        except AttributeError:
+            pass
+        temp = xr.DataArray(temp, dims=var.dims, attrs=var.attrs)
+        out_vars[name] = temp.isel(**local_slices)
+        if renumber_field is not None:
+            out_vars[name].data = inv_indices[renumber_field][out_vars[name].data].astype(temp.dtype)
+        del temp
 
+    new_grid = xr.Dataset(out_vars, attrs=grid.attrs)
     return new_grid, renumbering_table
 
 def find_central_vertex(grid, vertex_spec):
@@ -110,8 +134,8 @@ def _main():
     new_grid.to_netcdf(args.output_grid)
     renumbering_table.to_netcdf(args.output_renumbering_table)
 
-    print(new_grid)
-    print(renumbering_table)
+    #print(new_grid)
+    #print(renumbering_table)
 
 if __name__ == '__main__':
     _main()
